@@ -9,7 +9,7 @@
 
 //thanks to @Hank Hill for the original idea and ToS script this is based on.
 
-indicator('Average Daily Range Zones', 'ADR Zones', overlay=true)
+indicator('Average Daily Range Zones - IB Based', 'ADR Zones - IB', overlay=true)
 firstLength = input.int(21, title='Averaging Periods  ', inline='periods')
 secondLength = input.int(14, title='', inline='periods')
 
