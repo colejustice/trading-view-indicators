@@ -1,0 +1,221 @@
+//@version=5
+//The Average Daily Range is calculated as the difference between daily highs and lows averaged over a specific periods.
+//This range is is overlaid and centered on the day's open, and tends to act as areas of support and resistance.
+
+//Also for future reference; an sma() on a security return is not the same as a security() with an sma argument.
+// i.e., security(tickerid, 'D', sma(dayRange, length)) != sma(security(tickerid, 'D', dayRange), length)
+
+//Includes TradingView's own f_security function for better historical data.
+
+//thanks to @Hank Hill for the original idea and ToS script this is based on.
+
+indicator('Average Daily Range Zones', 'ADR Zones', overlay=true)
+firstLength = input.int(21, title='Averaging Periods  ', inline='periods')
+secondLength = input.int(14, title='', inline='periods')
+
+useVariance = input.string("Standard Deviation", title = "Zones Calculation", options=["Standard Deviation", "Variance"]) == "Variance"
+dynamic     = input(true, title='Dynamically Toggle Extra Zones', tooltip="When enabled, selected zones only appear if price has crossed the previous zone.")
+showStDev_1 = input.bool(true, '', inline='stDev1')
+stDev_1     = input.float(1, 'First Zone Multiplier     ', inline='stDev1', step=0.1)
+showStDev_2 = input.bool(true, '', inline='stDev2')
+stDev_2     = input.float(2, 'Second Zone Multiplier  ', inline='stDev2', step=0.1)
+showStDev_3 = input.bool(true, '', inline='stDev3')
+stDev_3     = input.float(3, 'Third Zone Multiplier    ', inline='stDev3', step=0.1)
+showStDev_4 = input.bool(true, '', inline='stDev4')
+stDev_4     = input.float(4, 'Fourth Zone Multiplier   ', inline='stDev4', step=0.1)
+showStDev_5 = input.bool(true, '', inline='stDev5')
+stDev_5     = input.float(5, 'Fifth Zone Multiplier    ', inline='stDev5', step=0.1)
+
+upperColor1 = input.color(#00ff00, "Upper ADR Color Gradient", group="Style", inline="upperColor")
+upperColor2 = input.color(#bbffbb, "", group="Style", inline="upperColor")
+lowerColor1 = input.color(#ff0000, "Lower ADR Color Gradient", group="Style", inline="lowerColor")
+lowerColor2 = input.color(#ffbbbb, "", group="Style", inline="lowerColor")
+drawOpen = input(true, 'Draw Day Open Plot', group="Style")
+fillOpenToADR = input(true, 'Fill Open To ADR', group="Style")
+fillOpenVisibility = 100 - input.int(10, minval=0, maxval=100, step=1, title='Open to ADR Fill Visibility', group="Style")
+
+lineVisibility = 100 - input.int(70, minval=0, maxval=100, step=5, title='Line Visibility', group="Style")
+fillVisibility = 100 - input.int(25, minval=0, maxval=100, step=1, title='Fill Visibility', group="Style")
+scaledVisibility = fillVisibility + (100 - fillVisibility) / 100
+scaledLineVisibility = lineVisibility + (100 - lineVisibility) / 100
+scaledOpenFillVisibility = fillOpenVisibility + (100 - fillOpenVisibility) / 100
+
+i_timeframe = input.timeframe(title='Custom Timeframe', defval='D', group="Rules")
+showTodayOnly = input(false, title='Plot For Today Only', group="Rules")
+disableNonIntraday = input(true, title='Disable On Daily or Above', group="Rules")
+
+openingRangePeriod  = input.session("0930-1030", title="Opening Range Time Period (EST)", tooltip="The High and Low during this period constitute the opening range.")
+timezone = input.string("America/New_York", title="Timezone", options=["America/New_York","America/Los_Angeles","America/Chicago","America/Phoenix","America/Toronto","America/Vancouver","America/Argentina/Buenos_Aires","America/El_Salvador","America/Sao_Paulo","America/Bogota","Europe/Moscow","Europe/Athens","Europe/Berlin","Europe/London","Europe/Madrid","Europe/Paris","Europe/Warsaw","Australia/Sydney","Australia/Brisbane","Australia/Adelaide","Australia/ACT","Asia/Almaty","Asia/Ashkhabad","Asia/Tokyo","Asia/Taipei","Asia/Singapore","Asia/Shanghai","Asia/Seoul","Asia/Tehran","Asia/Dubai","Asia/Kolkata","Asia/Hong_Kong","Asia/Bangkok","Pacific/Auckland","Pacific/Chatham","Pacific/Fakaofo","Pacific/Honolulu"])
+openingRangeSession = time(timeframe.period, str.format("{0}:1234567", openingRangePeriod), timezone)
+
+bool i_reminder = false
+var string ticker = syminfo.tickerid
+
+isToday = false
+if year(timenow) == year(time) and month(timenow) == month(time) and dayofmonth(timenow) == dayofmonth(time)
+    isToday := true
+if not showTodayOnly
+    isToday := true
+
+var openingRangeHigh = 0.0
+var openingRangeLow = 0.0
+
+if openingRangeSession
+    if not openingRangeSession[1]
+        openingRangeLow  := low
+        openingRangeHigh := high
+    else
+        openingRangeLow  := math.min(low, openingRangeLow)
+        openingRangeHigh := math.max(high, openingRangeHigh)
+
+openingRangeMid = openingRangeLow + ((openingRangeHigh - openingRangeLow) / 2)
+
+bool enabled = true
+if (disableNonIntraday and not timeframe.isintraday)
+    enabled := false
+    
+
+//▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+f_security(_sym, _res, _src) =>
+    request.security(_sym, _res, _src[barstate.isrealtime ? 1 : 0], barmerge.gaps_off, lookahead=barmerge.lookahead_off)[barstate.isrealtime ? 0 : 1]
+f_security_lookahead(_sym, _res, _src) =>
+    request.security(_sym, _res, _src[barstate.isrealtime ? 1 : 0], barmerge.gaps_off, lookahead=barmerge.lookahead_on)[barstate.isrealtime ? 0 : 1]
+//▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+dayOpen  = openingRangeMid // request.security(ticker, i_timeframe, open, barmerge.gaps_off, barmerge.lookahead_on)
+dayRange = f_security(ticker, i_timeframe, high - low)
+
+avgRange_first  = f_security(ticker, i_timeframe, ta.sma(dayRange, firstLength))
+avgRange_second = f_security(ticker, i_timeframe, ta.sma(dayRange, secondLength))
+
+adr_high_first  = plot(enabled and isToday and not openingRangeSession ? dayOpen + avgRange_first / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR High First Length")
+adr_high_second = plot(enabled and isToday and not openingRangeSession ? dayOpen + avgRange_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=1, title = "ADR High Second Length")
+adr_low_first   = plot(enabled and isToday and not openingRangeSession ? dayOpen - avgRange_first / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR Low First Length")
+adr_low_second  = plot(enabled and isToday and not openingRangeSession ? dayOpen - avgRange_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=1, title = "ADR Low Second Length")
+
+dailyRange_stDev_first      = f_security(ticker, i_timeframe, ta.stdev(high - low, firstLength))
+dailyRange_stDev_second     = f_security(ticker, i_timeframe, ta.stdev(high - low, secondLength))
+dailyRange_variance_first   = f_security(ticker, i_timeframe, ta.variance(high - low, firstLength))
+dailyRange_variance_second  = f_security(ticker, i_timeframe, ta.variance(high - low, secondLength))
+
+avgRange_stDev_1_first  = avgRange_first  + (not useVariance ? dailyRange_stDev_first  : dailyRange_variance_first)  * stDev_1
+avgRange_stDev_1_second = avgRange_second + (not useVariance ? dailyRange_stDev_second : dailyRange_variance_second) * stDev_1
+avgRange_stDev_2_first  = avgRange_first  + (not useVariance ? dailyRange_stDev_first  : dailyRange_variance_first)  * stDev_2
+avgRange_stDev_2_second = avgRange_second + (not useVariance ? dailyRange_stDev_second : dailyRange_variance_second) * stDev_2
+avgRange_stDev_3_first  = avgRange_first  + (not useVariance ? dailyRange_stDev_first  : dailyRange_variance_first)  * stDev_3
+avgRange_stDev_3_second = avgRange_second + (not useVariance ? dailyRange_stDev_second : dailyRange_variance_second) * stDev_3
+avgRange_stDev_4_first  = avgRange_first  + (not useVariance ? dailyRange_stDev_first  : dailyRange_variance_first)  * stDev_4
+avgRange_stDev_4_second = avgRange_second + (not useVariance ? dailyRange_stDev_second : dailyRange_variance_second) * stDev_4
+avgRange_stDev_5_first  = avgRange_first  + (not useVariance ? dailyRange_stDev_first  : dailyRange_variance_first)  * stDev_5
+avgRange_stDev_5_second = avgRange_second + (not useVariance ? dailyRange_stDev_second : dailyRange_variance_second) * stDev_5
+
+hod = request.security(ticker, i_timeframe, high, barmerge.gaps_off, barmerge.lookahead_on)
+lod = request.security(ticker, i_timeframe, low, barmerge.gaps_off, barmerge.lookahead_on)
+showStDev1High = showStDev_1
+showStDev1Low = showStDev_1
+showStDev2High = showStDev_2
+showStDev2Low = showStDev_2
+showStDev3High = showStDev_3
+showStDev3Low = showStDev_3
+showStDev4High = showStDev_4
+showStDev4Low = showStDev_4
+showStDev5High = showStDev_5
+showStDev5Low = showStDev_5
+if dynamic
+    showStDev1High := hod > dayOpen + avgRange_first / 2 and hod > dayOpen + avgRange_second / 2 and showStDev_1
+    showStDev1Low  := lod < dayOpen - avgRange_first / 2 and lod < dayOpen - avgRange_second / 2 and showStDev_1
+    showStDev2High := hod > dayOpen + avgRange_stDev_1_first / 2 and hod > dayOpen + avgRange_stDev_1_second / 2 and showStDev_2
+    showStDev2Low  := lod < dayOpen - avgRange_stDev_1_first / 2 and lod < dayOpen - avgRange_stDev_1_second / 2 and showStDev_2
+    showStDev3High := hod > dayOpen + avgRange_stDev_2_first / 2 and hod > dayOpen + avgRange_stDev_2_second / 2 and showStDev_3
+    showStDev3Low  := lod < dayOpen - avgRange_stDev_2_first / 2 and lod < dayOpen - avgRange_stDev_2_second / 2 and showStDev_3
+    showStDev4High := hod > dayOpen + avgRange_stDev_3_first / 2 and hod > dayOpen + avgRange_stDev_3_second / 2 and showStDev_4
+    showStDev4Low  := lod < dayOpen - avgRange_stDev_3_first / 2 and lod < dayOpen - avgRange_stDev_3_second / 2 and showStDev_4
+    showStDev5High := hod > dayOpen + avgRange_stDev_4_first / 2 and hod > dayOpen + avgRange_stDev_4_second / 2 and showStDev_5
+    showStDev5Low  := lod < dayOpen - avgRange_stDev_4_first / 2 and lod < dayOpen - avgRange_stDev_4_second / 2 and showStDev_5
+
+high_color = color.from_gradient(0, 0, 3, upperColor1, upperColor2)
+high_1_stDev_color = color.from_gradient(1, 0, 3, upperColor1, upperColor2)
+high_2_stDev_color = color.from_gradient(2, 0, 3, upperColor1, upperColor2)
+high_3_stDev_color = color.from_gradient(3, 0, 3, upperColor1, upperColor2)
+high_4_stDev_color = color.from_gradient(3, 0, 3, upperColor1, upperColor2)
+high_5_stDev_color = color.from_gradient(3, 0, 3, upperColor1, upperColor2)
+low_color = color.from_gradient(0, 0, 3, lowerColor1, lowerColor2)
+low_1_stDev_color = color.from_gradient(1, 0, 3, lowerColor1, lowerColor2)
+low_2_stDev_color = color.from_gradient(2, 0, 3, lowerColor1, lowerColor2)
+low_3_stDev_color = color.from_gradient(3, 0, 3, lowerColor1, lowerColor2)
+low_4_stDev_color = color.from_gradient(3, 0, 3, lowerColor1, lowerColor2)
+low_5_stDev_color = color.from_gradient(3, 0, 3, lowerColor1, lowerColor2)
+
+adr_high_1_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev1High ? dayOpen + avgRange_stDev_1_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR High 1 StDev First")
+adr_high_1_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev1High ? dayOpen + avgRange_stDev_1_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(high_1_stDev_color, scaledLineVisibility), title = "ADR High 1 StDev Second")
+adr_high_2_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev2High ? dayOpen + avgRange_stDev_2_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR High 2 StDev First")
+adr_high_2_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev2High ? dayOpen + avgRange_stDev_2_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(high_2_stDev_color, scaledLineVisibility), title = "ADR High 2 StDev Second")
+adr_high_3_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev3High ? dayOpen + avgRange_stDev_3_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR High 3 StDev First")
+adr_high_3_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev3High ? dayOpen + avgRange_stDev_3_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(high_3_stDev_color, scaledLineVisibility), title = "ADR High 3 StDev Second")
+adr_high_4_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev4High ? dayOpen + avgRange_stDev_4_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR High 4 StDev First")
+adr_high_4_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev4High ? dayOpen + avgRange_stDev_4_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(high_4_stDev_color, scaledLineVisibility), title = "ADR High 4 StDev Second")
+adr_high_5_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev5High ? dayOpen + avgRange_stDev_5_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR High 5 StDev First")
+adr_high_5_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev5High ? dayOpen + avgRange_stDev_5_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(high_5_stDev_color, scaledLineVisibility), title = "ADR High 5 StDev Second")
+
+adr_low_1_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev1Low ? dayOpen - avgRange_stDev_1_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR Low 1 StDev First")
+adr_low_1_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev1Low ? dayOpen - avgRange_stDev_1_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(low_1_stDev_color, scaledLineVisibility), title = "ADR Low 1 StDev Second")
+adr_low_2_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev2Low ? dayOpen - avgRange_stDev_2_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR Low 2 StDev First")
+adr_low_2_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev2Low ? dayOpen - avgRange_stDev_2_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(low_2_stDev_color, scaledLineVisibility), title = "ADR Low 2 StDev Second")
+adr_low_3_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev3Low ? dayOpen - avgRange_stDev_3_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR Low 3 StDev First")
+adr_low_3_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev3Low ? dayOpen - avgRange_stDev_3_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(low_3_stDev_color, scaledLineVisibility), title = "ADR Low 3 StDev Second")
+adr_low_4_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev4Low ? dayOpen - avgRange_stDev_4_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR Low 4 StDev First")
+adr_low_4_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev4Low ? dayOpen - avgRange_stDev_4_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(low_4_stDev_color, scaledLineVisibility), title = "ADR Low 4 StDev Second")
+adr_low_5_stDev_first  = plot(enabled and isToday and not openingRangeSession and showStDev5Low ? dayOpen - avgRange_stDev_5_first / 2 : na,  color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), linewidth=2, title = "ADR Low 5 StDev First")
+adr_low_5_stDev_second = plot(enabled and isToday and not openingRangeSession and showStDev5Low ? dayOpen - avgRange_stDev_5_second / 2 : na, color=dayOpen != dayOpen[1] ? na : color.new(low_5_stDev_color, scaledLineVisibility), title = "ADR Low 5 StDev Second")
+
+openPlot = plot(enabled and isToday and not openingRangeSession and drawOpen ? dayOpen : na, color=dayOpen != dayOpen[1] ? na : color.new(color.white, scaledLineVisibility), title = "Day Open")
+
+fill(adr_high_first, adr_high_second, color=dayOpen != dayOpen[1] ? na : color.new(high_color, scaledVisibility))
+fill(adr_high_1_stDev_first, adr_high_1_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(high_1_stDev_color, scaledVisibility))
+fill(adr_high_2_stDev_first, adr_high_2_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(high_2_stDev_color, scaledVisibility))
+fill(adr_high_3_stDev_first, adr_high_3_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(high_3_stDev_color, scaledVisibility))
+fill(adr_high_4_stDev_first, adr_high_4_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(high_4_stDev_color, scaledVisibility))
+fill(adr_high_5_stDev_first, adr_high_5_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(high_5_stDev_color, scaledVisibility))
+
+fill(adr_low_first, adr_low_second, color=dayOpen != dayOpen[1] ? na : color.new(low_color, scaledVisibility))
+fill(adr_low_1_stDev_first, adr_low_1_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(low_1_stDev_color, scaledVisibility))
+fill(adr_low_2_stDev_first, adr_low_2_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(low_2_stDev_color, scaledVisibility))
+fill(adr_low_3_stDev_first, adr_low_3_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(low_3_stDev_color, scaledVisibility))
+fill(adr_low_4_stDev_first, adr_low_4_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(low_4_stDev_color, scaledVisibility))
+fill(adr_low_5_stDev_first, adr_low_5_stDev_second, color=dayOpen != dayOpen[1] ? na : color.new(low_5_stDev_color, scaledVisibility))
+
+fill(adr_high_first, openPlot, color=fillOpenToADR and dayOpen == dayOpen[1] ? color.new(high_color, scaledOpenFillVisibility) : na)
+fill(adr_low_first, openPlot, color=fillOpenToADR and dayOpen == dayOpen[1] ? color.new(low_color, scaledOpenFillVisibility): na)
+
+// ————— Show warning or HTF reminder, if needed.
+f_tfReminderAndErrorCheck(_userSelectionOfTf, _tfReminder) =>
+    // Get chart's TF.
+    var float _chartTfInMinutes = timeframe.multiplier * (timeframe.isseconds ? 1. / 60 : timeframe.isminutes ? 1. : timeframe.isdaily ? 60. * 24 : timeframe.isweekly ? 60. * 24 * 7 : timeframe.ismonthly ? 60. * 24 * 30.4375 : na)
+
+    // Get HTF.
+    float _htfInMinutes = request.security(syminfo.tickerid, _userSelectionOfTf, _chartTfInMinutes)
+
+    // Label.
+    string _txt = ''
+    var color _color = na
+    if _chartTfInMinutes > _htfInMinutes
+        // Chart TF is higher than user-selected TF.
+        _txt := 'The chart\'s timeframe\nshould not be greater than ' + _userSelectionOfTf
+        _color := color.red
+        _color
+        // Display reminder of HTF.
+    else if _tfReminder
+        _txt := _userSelectionOfTf
+        _color := color.silver
+        _color
+    float _y = ta.lowest(50)[1]
+    var label _lbl = label.new(bar_index, _y, _txt, xloc.bar_index, yloc.price, #00000000, label.style_label_left, _color, size.large, text.align_left)
+    if barstate.islast and _txt != ''
+        // Update label.
+        label.set_xy(_lbl, bar_index, _y)
+        label.set_text(_lbl, _txt)
+        label.set_textcolor(_lbl, _color)
+    [_chartTfInMinutes, _htfInMinutes]
+
+f_tfReminderAndErrorCheck(i_timeframe, i_reminder)
+
